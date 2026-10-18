@@ -1,0 +1,20 @@
+diff --git a/build-tarball-mainline.sh b/build-tarball-mainline.sh
+--- a/build-tarball-mainline.sh
++++ b/build-tarball-mainline.sh
+@@ -25,6 +25,15 @@ cp -av overlay/* "${dir}/"
+ if [ -e "${HERE}/${deviceinfo_ubuntu_touch_release}-overlay" ]; then
+     cp -a ${HERE}/${deviceinfo_ubuntu_touch_release}-overlay/system/* $dir/system/
+ fi
+ 
++SCHEMA_DIR="${dir}/system/usr/share/glib-2.0/schemas"
++if compgen -G "${SCHEMA_DIR}/*.gschema.override" > /dev/null; then
++    if ! command -v glib-compile-schemas > /dev/null 2>&1; then
++        echo "glib-compile-schemas is required to compile schema overrides" >&2
++        exit 1
++    fi
++    glib-compile-schemas --strict "${SCHEMA_DIR}"
++fi
++
+ INITRC_PATHS="
+ ${dir}/system/opt/halium-overlay/system/etc/init
+ ${dir}/system/usr/share/halium-overlay/system/etc/init

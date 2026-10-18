@@ -1,0 +1,113 @@
+diff --git a/make-bootimage.sh b/make-bootimage.sh
+index b259b34..17efcec 100755
+--- a/make-bootimage.sh
++++ b/make-bootimage.sh
+@@ -49,6 +49,19 @@ case "${deviceinfo_recovery_ramdisk_compression:=gzip}" in
+         ;;
+ esac
+ 
++case "${deviceinfo_vendor_boot_ramdisk_compression:=$deviceinfo_ramdisk_compression}" in
++    gzip)
++        VENDOR_COMPRESSION_CMD="gzip -9"
++        ;;
++    lz4)
++        VENDOR_COMPRESSION_CMD="lz4 -l -9"
++        ;;
++    *)
++        echo "Unsupported deviceinfo_vendor_boot_ramdisk_compression value: '$deviceinfo_vendor_boot_ramdisk_compression'"
++        exit 1
++        ;;
++esac
++
+ avb_add_hash_footer() {
+     local bootimg="$1" bytes="$2" part rsa4096_key extra_args
+     [ -z "$bytes" ] && return
+@@ -75,6 +88,13 @@ if [ -e "$RECOVERY_RAMDISK" ]; then
+ 
+     fakeroot -- bash <<EOF
+ gzip -dc "$RECOVERY_RAMDISK" | cpio -i
++if [ "$deviceinfo_recovery_fakecache" = "false" ]; then
++    if ! grep -q '^[[:space:]]*setprop ro\.ubuntu\.recovery\.fakecache true$' system/etc/init/hw/init.rc; then
++        echo "Expected fake-cache property not found in system/etc/init/hw/init.rc" >&2
++        exit 1
++    fi
++    sed -i 's/^\([[:space:]]*\)setprop ro\.ubuntu\.recovery\.fakecache true$/\1setprop ro.ubuntu.recovery.fakecache false/' system/etc/init/hw/init.rc
++fi
+ if [[ -n "$deviceinfo_unified_recovery_ui_density" && "$deviceinfo_unified_recovery_ui_density" != "mdpi" ]]; then
+     cp "$TMPDOWN/halium_bootable_recovery/res-$deviceinfo_unified_recovery_ui_density/images"/* "$TMPDOWN/ramdisk-recovery/res/images"
+ fi
+@@ -151,6 +171,50 @@ if [ -d "$HERE/vendor-ramdisk-overlay" ]; then
+     VENDOR_RAMDISK="$TMPDOWN/ramdisk-vendor_boot.img"
+     rm -rf "$TMPDOWN/vendor-ramdisk"
+     mkdir -p "$TMPDOWN/vendor-ramdisk"
++
++    BASE_VENDOR_RAMDISK_CPIO=""
++    BASE_VENDOR_DTB=""
++    if [ -n "$deviceinfo_vendor_boot_base_image" ]; then
++        case "$deviceinfo_vendor_boot_base_image" in
++            /*) BASE_VENDOR_BOOT_IMAGE="$deviceinfo_vendor_boot_base_image" ;;
++            *) BASE_VENDOR_BOOT_IMAGE="$HERE/$deviceinfo_vendor_boot_base_image" ;;
++        esac
++        if [ ! -r "$BASE_VENDOR_BOOT_IMAGE" ]; then
++            echo "Vendor boot base image not found: $BASE_VENDOR_BOOT_IMAGE" >&2
++            exit 1
++        fi
++
++        BASE_VENDOR_BOOT_DIR="$TMPDOWN/vendor-boot-base"
++        rm -rf "$BASE_VENDOR_BOOT_DIR"
++        mkdir -p "$BASE_VENDOR_BOOT_DIR"
++        "$TMPDOWN/android_system_tools_mkbootimg/unpack_bootimg.py" \
++            --boot_img "$BASE_VENDOR_BOOT_IMAGE" --out "$BASE_VENDOR_BOOT_DIR"
++        BASE_VENDOR_RAMDISK="$BASE_VENDOR_BOOT_DIR/vendor_ramdisk"
++        BASE_VENDOR_DTB="$BASE_VENDOR_BOOT_DIR/dtb"
++        if [ ! -f "$BASE_VENDOR_RAMDISK" ] || [ ! -f "$BASE_VENDOR_DTB" ]; then
++            echo "Base vendor_boot image is missing its vendor ramdisk or DTB" >&2
++            exit 1
++        fi
++
++        BASE_VENDOR_RAMDISK_CPIO="$BASE_VENDOR_BOOT_DIR/vendor_ramdisk.cpio"
++        case "$deviceinfo_vendor_boot_ramdisk_compression" in
++            gzip) gzip -dc "$BASE_VENDOR_RAMDISK" > "$BASE_VENDOR_RAMDISK_CPIO" ;;
++            lz4) lz4 -d -c "$BASE_VENDOR_RAMDISK" > "$BASE_VENDOR_RAMDISK_CPIO" ;;
++        esac
++
++        cd "$TMPDOWN/vendor-ramdisk"
++        cpio -idmu --no-absolute-filenames < "$BASE_VENDOR_RAMDISK_CPIO"
++        BASE_RECOVERY_MODULE_LIST="$BASE_VENDOR_BOOT_DIR/modules.load.recovery"
++        if [ -f "$TMPDOWN/vendor-ramdisk/lib/modules/modules.load.recovery" ]; then
++            cp "$TMPDOWN/vendor-ramdisk/lib/modules/modules.load.recovery" "$BASE_RECOVERY_MODULE_LIST"
++        fi
++        rm -rf "$TMPDOWN/vendor-ramdisk/lib/modules"
++        if [ -f "$BASE_RECOVERY_MODULE_LIST" ]; then
++            mkdir -p "$TMPDOWN/vendor-ramdisk/lib/modules"
++            cp "$BASE_RECOVERY_MODULE_LIST" "$TMPDOWN/vendor-ramdisk/lib/modules/modules.load.recovery"
++        fi
++    fi
++
+     cd "$TMPDOWN/vendor-ramdisk"
+ 
+     if [[ -f "$HERE/vendor-ramdisk-overlay/lib/modules/modules.load" && "$deviceinfo_kernel_disable_modules" != "true" ]]; then
+@@ -195,7 +259,11 @@ if [ -d "$HERE/vendor-ramdisk-overlay" ]; then
+ 
+     cp -r "$HERE/vendor-ramdisk-overlay"/* "$TMPDOWN/vendor-ramdisk"
+ 
+-    find . | cpio -o -H newc | $COMPRESSION_CMD > "$VENDOR_RAMDISK"
++    if [ -n "$BASE_VENDOR_RAMDISK_CPIO" ]; then
++        find . | cpio -o -H newc --owner=0:0 | $VENDOR_COMPRESSION_CMD > "$VENDOR_RAMDISK"
++    else
++        find . | cpio -o -H newc | $VENDOR_COMPRESSION_CMD > "$VENDOR_RAMDISK"
++    fi
+ fi
+ 
+ if [ -n "$deviceinfo_kernel_image_name" ]; then
+@@ -234,6 +302,10 @@ elif [ -n "$deviceinfo_dtb" ]; then
+     fi
+ fi
+ 
++if [ -n "$BASE_VENDOR_DTB" ] && [ -z "$deviceinfo_dtb" ]; then
++    DTB="$BASE_VENDOR_DTB"
++fi
++
+ if [ -n "$deviceinfo_bootimg_prebuilt_dt" ]; then
+     DT="$HERE/$deviceinfo_bootimg_prebuilt_dt"
+ elif [ -n "$deviceinfo_bootimg_dt" ]; then

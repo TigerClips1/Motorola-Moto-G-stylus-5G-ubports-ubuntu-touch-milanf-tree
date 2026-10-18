@@ -1,0 +1,31 @@
+From 1e9d0d1f6fd1fd7bfa4d6062e037408a4a3cc221 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] camera: fix register dump buffer sizes
+
+The formatted register prefix and value strings need room for their
+terminating NUL byte. Advance the output pointer by the full string width
+so subsequent values do not overwrite the previous terminator.
+---
+ techpack/camera/drivers/cam_utils/cam_io_util.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/techpack/camera/drivers/cam_utils/cam_io_util.c b/techpack/camera/drivers/cam_utils/cam_io_util.c
+index 0d78f5f43..b32dc490d 100644
+--- a/techpack/camera/drivers/cam_utils/cam_io_util.c
++++ b/techpack/camera/drivers/cam_utils/cam_io_util.c
+@@ -262,12 +262,12 @@ int cam_io_dump(void __iomem *base_addr, uint32_t start_offset, int size)
+ 	line_str[0] = '\0';
+ 	p_str = line_str;
+ 	for (i = 0; i < size; i++) {
+ 		if (i % NUM_REGISTER_PER_LINE == 0) {
+-			snprintf(p_str, 12, "0x%08x: ",
++			snprintf(p_str, 13, "0x%08x: ",
+ 				REG_OFFSET(start_offset, i));
+-			p_str += 11;
++			p_str += 12;
+ 		}
+ 		data = readl_relaxed(base_addr + REG_OFFSET(start_offset, i));
+-		snprintf(p_str, 10, "%08x  ", data);
+-		p_str += 9;
++		snprintf(p_str, 11, "%08x  ", data);
++		p_str += 10;
+ 		if ((i + 1) % NUM_REGISTER_PER_LINE == 0) {

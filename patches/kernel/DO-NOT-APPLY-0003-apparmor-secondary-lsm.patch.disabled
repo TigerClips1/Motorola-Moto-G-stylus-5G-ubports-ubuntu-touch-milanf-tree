@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Subject: [DO NOT APPLY] security: allow AppArmor as a secondary LSM
+
+Android vendor policy requires SELinux to remain the primary exclusive LSM,
+while Ubuntu Touch click-app confinement requires AppArmor to initialize too.
+The default flags make both LSMs exclusive, so SELinux-first disables AppArmor.
+Make AppArmor a non-major secondary LSM; keep the device config's SELinux-first
+ordering and default unchanged.
+
+This device-specific stacking change is experimental and must be runtime-tested
+before deployment.
+---
+ security/apparmor/lsm.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/security/apparmor/lsm.c b/security/apparmor/lsm.c
+--- a/security/apparmor/lsm.c
++++ b/security/apparmor/lsm.c
+@@ -1780,6 +1780,6 @@ DEFINE_LSM(apparmor) = {
+ 	.name = "apparmor",
+-	.flags = LSM_FLAG_LEGACY_MAJOR | LSM_FLAG_EXCLUSIVE,
++	.flags = 0,
+ 	.enabled = &apparmor_enabled,
+ 	.blobs = &apparmor_blob_sizes,
+ 	.init = apparmor_init,
+ };

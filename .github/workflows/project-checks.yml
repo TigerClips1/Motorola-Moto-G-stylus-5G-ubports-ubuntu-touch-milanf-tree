@@ -1,0 +1,29 @@
+name: Project checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  shell-syntax:
+    name: Check shell syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Check shell scripts
+        run: |
+          find . -type f -name '*.sh' \
+            -not -path './.git/*' \
+            -not -path './build/*' \
+            -not -path './workdir/*' \
+            -print0 |
+          while IFS= read -r -d '' script; do
+            bash -n "$script"
+          done
+          bash -n ./build.sh
+          bash -n ./ramdisk-overlay/scripts/halium

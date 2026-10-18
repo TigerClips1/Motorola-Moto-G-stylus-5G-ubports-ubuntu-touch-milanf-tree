@@ -1,0 +1,41 @@
+#!/system/bin/sh
+
+exit_mounted() {
+    setprop halium.datamount.done 1
+    exit "$1"
+}
+
+case "$(getprop ro.ubuntu.recovery.fakecache)" in
+true|1) : ;;
+*) exit_mounted 0 ;;
+esac
+
+vgchange -ay ubports > /dev/kmsg 2>&1 || true
+if [ -e /dev/ubports/userdata ]; then
+    MOUNT_DEV=/dev/ubports/userdata
+else
+    MOUNT_DEV=/dev/block/by-name/userdata
+fi
+
+already_mounted() {
+    grep -q "^[^ ]* $1 " /proc/mounts
+}
+
+RETRY_COUNTER=0
+while [ $((RETRY_COUNTER += 1)) -le 3 ]; do
+    already_mounted /data && break
+    mount -t f2fs "$MOUNT_DEV" /data > /dev/kmsg 2>&1 && break
+    sleep 1
+done
+
+if [ "$RETRY_COUNTER" -eq 4 ]; then
+    echo "setup-fake-cache: failed to mount f2fs userdata at $MOUNT_DEV" > /dev/kmsg
+    exit_mounted 1
+fi
+
+if ! already_mounted /cache; then
+    mkdir -p /data/cache > /dev/kmsg 2>&1 || exit_mounted 1
+    mount -o bind /data/cache /cache > /dev/kmsg 2>&1 || exit_mounted 1
+fi
+
+exit_mounted 0
