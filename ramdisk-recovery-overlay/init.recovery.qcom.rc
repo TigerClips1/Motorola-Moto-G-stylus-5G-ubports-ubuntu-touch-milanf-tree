@@ -1,0 +1,54 @@
+#
+# Copyright (C) 2026 The Android Open Source Project
+# Copyright (C) 2026 SebaUbuntu's TWRP Device Tree Generator
+# Copyright (C) 2019-Present A-Team Digital Solutions
+# Copyright (C) 2024 sosRR
+#
+
+import /init.recovery.usb.rc
+
+on init
+    write /sys/class/backlight/panel0-backlight/brightness 200
+
+on fs
+    wait /dev/block/platform/soc/${ro.boot.bootdevice}
+    symlink /dev/block/platform/soc/${ro.boot.bootdevice} /dev/block/bootdevice
+
+    # Do not wait on boot_adsp/battery here: init runs actions strictly in
+    # order, so a wait for a node that never appears stalls every later action,
+    # including the USB gadget setup in init.recovery.usb.rc.
+    start runatboot
+
+on post-fs-data
+    start copy_halium_logs
+    start usb_diagnostics
+    start usb_watchdog
+
+service runatboot /system/bin/runatboot.sh
+    user root
+    group root
+    oneshot
+    seclabel u:r:recovery:s0
+
+service usb_diagnostics /system/bin/capture-usb-state.sh
+    user root
+    group root
+    oneshot
+    disabled
+    seclabel u:r:recovery:s0
+
+# Keeps ADB alive across cable re-plugs and logs the USB/cable state, because a
+# broken USB link also takes away the only way to read a log.
+service usb_watchdog /system/bin/usb-watchdog.sh
+    user root
+    group root
+    oneshot
+    disabled
+    seclabel u:r:recovery:s0
+
+service copy_halium_logs /system/bin/copy-halium-logs.sh
+    user root
+    group root
+    oneshot
+    disabled
+    seclabel u:r:recovery:s0

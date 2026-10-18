@@ -1,0 +1,7 @@
+service vndservicemanager /vendor/bin/vndservicemanager /dev/vndbinder
+    class core
+    user system
+    group system readproc
+    file /dev/kmsg w
+    task_profiles ServiceCapacityLow
+    shutdown critical

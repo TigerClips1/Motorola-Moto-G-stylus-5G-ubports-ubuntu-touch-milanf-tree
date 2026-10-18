@@ -1,0 +1,83 @@
+diff --git a/build.sh b/build.sh
+index 0cf5d87..f1a6345 100755
+--- a/build.sh
++++ b/build.sh
+@@ -68,7 +68,7 @@ if $deviceinfo_kernel_clang_compile; then
+ if $deviceinfo_kernel_clang_compile; then
+     if [ -n "$deviceinfo_kernel_llvm_compile" ] && $deviceinfo_kernel_llvm_compile; then
+         # Restrict available binaries in PATH to make builds less susceptible to host differences
+-        ALLOWED_HOST_TOOLS="bash git perl sh sync tar yes"
++        ALLOWED_HOST_TOOLS="awk basename bash bc cat chmod cmp cpio cp cut date diff dirname echo find git grep gzip head install ln ls md5sum mkdir mktemp mv perl pwd python3 readlink rm sed sh sha256sum sort stat sync tail tar tee touch uname uniq wc which whoami xargs yes"
+ 
+         HOST_TOOLS=${TMPDOWN}/host_tools
+         rm -rf ${HOST_TOOLS}
+@@ -78,16 +78,18 @@ if $deviceinfo_kernel_clang_compile; then
+             ln -sf $(which $tool) ${HOST_TOOLS}
+         done
+ 
+-        BUILD_TOOLS_BIN="${TMPDOWN}/build-tools/linux-x86/bin"
++        BUILD_TOOLS_BIN="${deviceinfo_kernel_host_build_tools_path:-${TMPDOWN}/build-tools/linux-x86}/bin"
+         BUILD_TOOLS_PATH="${TMPDOWN}/build-tools/path/linux-x86"
++        BUILD_TOOLS_TOYBOX="${deviceinfo_kernel_host_build_tools_path:-${TMPDOWN}/build-tools/linux-x86}/bin/toybox"
+ 
+         EXTRA_TOYBOX_TOOLS="dd expr nproc tr"
++        mkdir -p "${BUILD_TOOLS_PATH}"
+         for tool in ${EXTRA_TOYBOX_TOOLS}
+         do
+-            ln -sf ../../linux-x86/bin/toybox "${BUILD_TOOLS_PATH}/${tool}"
++            ln -sf "${BUILD_TOOLS_TOYBOX}" "${BUILD_TOOLS_PATH}/${tool}"
+         done
+ 
+-        KERNEL_BUILD_TOOLS_BIN="${TMPDOWN}/kernel-build-tools/linux-x86/bin"
++        KERNEL_BUILD_TOOLS_BIN="${deviceinfo_kernel_build_tools_path:-${TMPDOWN}/kernel-build-tools/linux-x86}/bin"
+ 
+         PATH="$CLANG_PATH/bin:${BUILD_TOOLS_BIN}:${BUILD_TOOLS_PATH}:${KERNEL_BUILD_TOOLS_BIN}:${HOST_TOOLS}" \
+             "$SCRIPT/build-kernel.sh" "${TMPDOWN}" "${TMP}/system" "${MENUCONFIG}"
+diff --git a/setup_repositories.sh b/setup_repositories.sh
+index 8df92b7..f0500e3 100644
+--- a/setup_repositories.sh
++++ b/setup_repositories.sh
+@@ -90,6 +90,13 @@ setup_clang() {
+     print_header "Setting up clang repositories"
+ 
++    if [ -n "$deviceinfo_kernel_clang_path" ]; then
++        if [ ! -x "$deviceinfo_kernel_clang_path/bin/clang" ]; then
++            print_error "Clang not found at '$deviceinfo_kernel_clang_path/bin/clang'"
++            exit 1
++        fi
++        CLANG_PATH="$(realpath "$deviceinfo_kernel_clang_path")"
++    else
+     # shellcheck disable=SC2154
+     local CLANG_BRANCH="$deviceinfo_kernel_clang_branch"
+     # shellcheck disable=SC2154
+     local CLANG_REVISION="$deviceinfo_kernel_clang_revision"
+@@ -138,6 +145,7 @@ setup_clang() {
+     CLANG_PATH="$TMPDOWN/linux-x86/clang-$CLANG_REVISION"
+     rm -rf "$TMPDOWN/linux-x86/.git" "$TMPDOWN/linux-x86/"!("clang-$CLANG_REVISION")
+     drop_python_wrapper "$CLANG_PATH/bin/clang"
++    fi
+ 
+     if [ -n "$deviceinfo_kernel_llvm_compile" ] && $deviceinfo_kernel_llvm_compile; then
+         export LLVM=1 LLVM_IAS=1
+@@ -184,7 +192,20 @@ setup_tooling() {
+                 ;;
+         esac
+ 
+-        if [ -n "$BUILD_TOOLS_BRANCH" ]; then
++        if [ -n "$deviceinfo_kernel_host_build_tools_path" ] &&
++            [ ! -x "$deviceinfo_kernel_host_build_tools_path/bin/bison" ]; then
++            print_error "Build tools not found at '$deviceinfo_kernel_host_build_tools_path/bin'"
++            exit 1
++        fi
++        if [ -n "$deviceinfo_kernel_build_tools_path" ] &&
++            [ ! -x "$deviceinfo_kernel_build_tools_path/bin/dtc" ]; then
++            print_error "Kernel build tools not found at '$deviceinfo_kernel_build_tools_path/bin'"
++            exit 1
++        fi
++
++        if [ -n "$BUILD_TOOLS_BRANCH" ] &&
++            { [ -z "$deviceinfo_kernel_host_build_tools_path" ] ||
++                [ -z "$deviceinfo_kernel_build_tools_path" ]; }; then
+             clone_if_not_existing "https://android.googlesource.com/platform/prebuilts/build-tools" "$BUILD_TOOLS_BRANCH"
+             clone_if_not_existing "https://android.googlesource.com/kernel/prebuilts/build-tools" "$BUILD_TOOLS_BRANCH" "kernel-build-tools"
+         fi

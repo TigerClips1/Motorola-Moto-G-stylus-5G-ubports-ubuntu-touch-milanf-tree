@@ -1,0 +1,172 @@
+#!/bin/sh
+
+log() {
+    echo "lxc-ready: $*" > /dev/kmsg
+}
+
+log "start"
+
+# The container state query is unreliable, so a timeout here is not fatal: the
+# container pid is looked up separately below.
+if lxc-wait -n android -s RUNNING -t 15; then
+    log "container RUNNING"
+else
+    log "lxc-wait timed out"
+fi
+
+containerpid="$(lxc-info -n android -p -H 2>/dev/null)"
+if [ -z "$containerpid" ]; then
+    for f in /sys/fs/cgroup/lxc.payload.android/cgroup.procs \
+             /sys/fs/cgroup/lxc/android/cgroup.procs \
+    ; do
+        [ -e "$f" ] || continue
+        containerpid="$(head -n 1 "$f")"
+        break
+    done
+fi
+
+if [ -n "$containerpid" ]; then
+    tries=0
+    while [ ! -f /proc/"$containerpid"/root/dev/.coldboot_done ]; do
+        tries=$(( tries + 1 ))
+        if [ "$tries" -gt 1200 ]; then
+            log "giving up on coldboot"
+            break
+        fi
+        sleep 0.1
+    done
+    log "coldboot wait finished after ${tries} tries"
+fi
+
+if [ "$(systemctl get-default)" = "charger.target" ]; then
+    log "charger mode"
+    echo u > /proc/sysrq-trigger
+    exit 0
+fi
+
+tries=0
+while [ ! -e /dev/socket/property_service ]; do
+    tries=$(( tries + 1 ))
+    if [ "$tries" -gt 1200 ]; then
+        log "giving up on property_service"
+        break
+    fi
+    sleep 0.1
+done
+
+tries=0
+while [ -z "$(getprop ro.build.version.sdk 2>/dev/null)" ]; do
+    tries=$(( tries + 1 ))
+    if [ "$tries" -gt 600 ]; then
+        log "giving up on getprop"
+        break
+    fi
+    sleep 0.1
+done
+log "sdk $(getprop ro.build.version.sdk 2>/dev/null)"
+
+if [ -f /custom/custom.prop ]; then
+    grep "^custom\." /custom/custom.prop | sed 's/=/ /' | while read -r property value; do
+        setprop "$property" "$value"
+    done
+fi
+
+# Generate the Android linker configuration.
+#
+# linkerconfig decides it is building a *recovery* configuration when
+# /system/bin/recovery exists, and a recovery configuration has no APEX and no
+# vendor namespaces: every vendor library then fails to load.  That file has to
+# exist for the container's init to use a single mount namespace instead of
+# trying to bind /bootstrap-apex over /apex, so hide it only while the
+# configuration is generated.  This requires /system to be writable, i.e.
+# /userdata/.writable_device_image.
+if [ -d /android/linkerconfig ]; then
+    mountpoint -q /android/linkerconfig || \
+        mount -t tmpfs linkerconfig /android/linkerconfig
+
+    linkerconfig=""
+    for candidate in \
+        /android/apex/com.android.runtime/bin/linkerconfig \
+        /android/system/bin/linkerconfig \
+    ; do
+        if [ -x "$candidate" ]; then
+            linkerconfig="$candidate"
+            break
+        fi
+    done
+    log "linkerconfig binary '${linkerconfig}'"
+
+    if [ -n "$linkerconfig" ]; then
+        hidden=""
+        if [ -e /android/system/bin/recovery ]; then
+            if mv /android/system/bin/recovery \
+                    /android/system/bin/recovery.halium 2>/dev/null; then
+                hidden=1
+            else
+                log "WARNING: /system is read-only, linkerconfig will emit a recovery configuration"
+            fi
+        fi
+
+        tries=0
+        while [ "$tries" -lt 160 ]; do
+            tries=$(( tries + 1 ))
+
+            if [ -e /android/apex/.default-apex-info-list.xml ]; then
+                touch /android/apex/apex-info-list.xml
+                mount -o bind,ro \
+                    /android/apex/.default-apex-info-list.xml \
+                    /android/apex/apex-info-list.xml 2>/dev/null || true
+            fi
+
+            "$linkerconfig" --target /android/linkerconfig >/dev/null 2>&1 || true
+
+            if grep -qs 'com\.android\.i18n' /android/linkerconfig/ld.config.txt; then
+                log "linkerconfig succeeded after ${tries} tries"
+                break
+            fi
+            sleep 0.5
+        done
+
+        [ -n "$hidden" ] && mv /android/system/bin/recovery.halium \
+            /android/system/bin/recovery
+
+        if ! grep -qs 'com\.android\.i18n' /android/linkerconfig/ld.config.txt; then
+            log "linkerconfig FAILED, ld.config.txt is $(wc -c < /android/linkerconfig/ld.config.txt 2>/dev/null) bytes"
+        fi
+
+        # libhybris resolves Android libraries through the host's view of the
+        # system image, so add the /android-prefixed search paths too.
+        for config in \
+            /android/linkerconfig/ld.config.txt \
+            /android/linkerconfig/*/ld.config.txt \
+        ; do
+            [ -e "$config" ] || continue
+            grep -q '\.paths += /android' "$config" && continue
+            awk '
+                function add_remove_prefix(path) {
+                    if (substr(path, 1, 8) == "/android") {
+                        return substr(path, 9)
+                    } else {
+                        return "/android" path
+                    }
+                }
+
+                $1 ~ /\.paths$/ {
+                    print $0
+                    print $1, "+=", add_remove_prefix($3)
+                    next
+                }
+
+                { print $0 }
+            ' "$config" > "$config.new" && mv "$config.new" "$config"
+        done
+
+        # Every vendor process must be able to read the configuration.  Without
+        # this bionic silently falls back to its built-in defaults, and vendor
+        # binaries then load /system/lib64/libbinder instead of the VNDK one,
+        # which aborts inside Access::getCallingContext().
+        chmod -R a+rX /android/linkerconfig
+    fi
+fi
+
+log "done"

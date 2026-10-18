@@ -1,0 +1,18 @@
+diff --git a/make-bootimage.sh b/make-bootimage.sh
+index b259b34..5b429d5 100755
+--- a/make-bootimage.sh
++++ b/make-bootimage.sh
+@@ -75,6 +75,13 @@ if [ -e "$RECOVERY_RAMDISK" ]; then
+ 
+     fakeroot -- bash <<EOF
+ gzip -dc "$RECOVERY_RAMDISK" | cpio -i
++if [ "$deviceinfo_recovery_fakecache" = "false" ]; then
++    if ! grep -q '^[[:space:]]*setprop ro\.ubuntu\.recovery\.fakecache true$' system/etc/init/hw/init.rc; then
++        echo "Expected fake-cache property not found in system/etc/init/hw/init.rc" >&2
++        exit 1
++    fi
++    sed -i 's/^\([[:space:]]*\)setprop ro\.ubuntu\.recovery\.fakecache true$/\1setprop ro.ubuntu.recovery.fakecache false/' system/etc/init/hw/init.rc
++fi
+ if [[ -n "$deviceinfo_unified_recovery_ui_density" && "$deviceinfo_unified_recovery_ui_density" != "mdpi" ]]; then
+     cp "$TMPDOWN/halium_bootable_recovery/res-$deviceinfo_unified_recovery_ui_density/images"/* "$TMPDOWN/ramdisk-recovery/res/images"
+ fi

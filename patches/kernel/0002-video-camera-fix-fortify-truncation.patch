@@ -1,0 +1,46 @@
+From 67b9552e64bbf1c99bb08933772c65a0c071f4d8 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] camera: video: fix fortify truncation warnings
+
+Use scnprintf for bounded VIDC trace output so the reported length never
+exceeds the bytes stored in the trace buffer. Fix the CSIPHY register
+dump buffer sizes to include the terminating NUL byte.
+---
+ techpack/camera/drivers/cam_sensor_module/cam_csiphy/cam_csiphy_soc.c | 8 ++++----
+ techpack/video/msm/vidc/msm_vidc_debug.h | 2 +-
+ 2 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/techpack/camera/drivers/cam_sensor_module/cam_csiphy/cam_csiphy_soc.c b/techpack/camera/drivers/cam_sensor_module/cam_csiphy/cam_csiphy_soc.c
+index 000000000..000000000 100644
+--- a/techpack/camera/drivers/cam_sensor_module/cam_csiphy/cam_csiphy_soc.c
++++ b/techpack/camera/drivers/cam_sensor_module/cam_csiphy/cam_csiphy_soc.c
+@@ -48,12 +48,12 @@ static int cam_io_phy_dump(void __iomem *base_addr,
+ 	p_str = line_str;
+ 	for (i = 0; i < size; i++) {
+ 		if (i % NUM_REGISTER_PER_LINE == 0) {
+-			snprintf(p_str, 12, "0x%08x: ",
++			snprintf(p_str, 13, "0x%08x: ",
+ 				REG_OFFSET(start_offset, i));
+-			p_str += 11;
++			p_str += 12;
+ 		}
+ 		data = readl_relaxed(base_addr + REG_OFFSET(start_offset, i));
+-		snprintf(p_str, 9, "%08x ", data);
+-		p_str += 8;
++		snprintf(p_str, 10, "%08x ", data);
++		p_str += 9;
+ 		if ((i + 1) % NUM_REGISTER_PER_LINE == 0) {
+ 			CAM_ERR(CAM_CSIPHY, "%s", line_str);
+ 			line_str[0] = '\0';
+diff --git a/techpack/video/msm/vidc/msm_vidc_debug.h b/techpack/video/msm/vidc/msm_vidc_debug.h
+index 000000000..000000000 100644
+--- a/techpack/video/msm/vidc/msm_vidc_debug.h
++++ b/techpack/video/msm/vidc/msm_vidc_debug.h
+@@ -108,7 +108,7 @@ extern int msm_vidc_vpp_delay;
+ 		if (is_print_allowed(sid, __level)) { \
+ 			if (msm_vidc_debug & VIDC_FTRACE) { \
+ 				char trace_logbuf[MAX_TRACER_LOG_LENGTH]; \
+-				int log_length = snprintf(trace_logbuf, \
++				int log_length = scnprintf(trace_logbuf, \
+ 					MAX_TRACER_LOG_LENGTH, \
+ 					VIDC_DBG_TAG __fmt, \
+ 					get_debug_level_str(__level), \

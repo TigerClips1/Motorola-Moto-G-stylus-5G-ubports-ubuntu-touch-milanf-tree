@@ -1,0 +1,105 @@
+/scripts/init-bottom/udev "$@"
+
+if run-init -n "${rootmnt}" "${init}"; then
+	tell_kmsg "post-init-bottom run-init preflight accepted ${init}"
+else
+	tell_kmsg "post-init-bottom run-init preflight rejected ${init}"
+fi
+
+if [ -d "${rootmnt}/userdata" ]; then
+	DIAGNOSTIC_DIR=""
+	metadata_partition=""
+	for candidate in \
+		/dev/disk/by-partlabel/metadata \
+		/dev/block/by-name/metadata \
+		/dev/block/bootdevice/by-name/metadata
+	do
+		if [ -b "$candidate" ]; then
+			metadata_partition=$(readlink -f "$candidate")
+			break
+		fi
+	done
+
+	if [ -n "$metadata_partition" ]; then
+		metadata_mount="${rootmnt}/dev/.halium-metadata"
+		mkdir -p "$metadata_mount"
+		if mount -t ext4 -o noatime,nosuid,nodev "$metadata_partition" "$metadata_mount"; then
+			DIAGNOSTIC_DIR="${metadata_mount}/halium-diagnostics"
+			if mkdir -p "$DIAGNOSTIC_DIR" &&
+				: > "$DIAGNOSTIC_DIR/halium-posthandoff-kmsg.log"; then
+				for name in halium-initrd.log halium-kmsg.log halium-mounts.log; do
+					if [ -f "${rootmnt}/userdata/$name" ]; then
+						cp -p "${rootmnt}/userdata/$name" "$DIAGNOSTIC_DIR/$name" ||
+							tell_kmsg "WARNING: failed to copy $name to metadata diagnostics"
+					fi
+				done
+				tell_kmsg "Capturing boot diagnostics on the metadata partition"
+			else
+				tell_kmsg "WARNING: couldn't prepare metadata diagnostics directory"
+				DIAGNOSTIC_DIR=""
+			fi
+		else
+			tell_kmsg "WARNING: couldn't mount the metadata partition for diagnostics"
+		fi
+	else
+		tell_kmsg "WARNING: metadata partition not found; boot diagnostics remain on userdata"
+	fi
+
+	dmesg > "${rootmnt}/userdata/halium-kmsg.log"
+	cat /proc/mounts > "${rootmnt}/userdata/halium-mounts.log"
+	if [ -n "$DIAGNOSTIC_DIR" ]; then
+		dmesg > "$DIAGNOSTIC_DIR/halium-kmsg.log"
+		cat /proc/mounts > "$DIAGNOSTIC_DIR/halium-mounts.log"
+	fi
+	sync
+
+	tell_kmsg "Arming temporary 180-second PID 1 diagnostic watchdog"
+	(
+		sleep 180
+		init_name=$(cat /proc/1/comm 2>/dev/null)
+		if [ "$init_name" = "systemd" ]; then
+			echo "initrd: diagnostic watchdog observed systemd; leaving boot running" >/dev/kmsg
+			exit 0
+		fi
+
+		echo "initrd: diagnostic timeout; PID 1 is '${init_name:-unknown}', panicking to preserve ramoops logs" >/dev/kmsg
+		echo 0 > /proc/sys/kernel/panic
+		echo 1 > /proc/sys/kernel/sysrq
+		echo c > /proc/sysrq-trigger
+	) </dev/null >/dev/null 2>&1 &
+
+	metadata_log_enabled=0
+	if [ -n "$DIAGNOSTIC_DIR" ]; then
+		if exec 4>>"${DIAGNOSTIC_DIR}/halium-posthandoff-kmsg.log"; then
+			metadata_log_enabled=1
+		else
+			tell_kmsg "WARNING: couldn't open post-handoff metadata log"
+		fi
+	fi
+	userdata_log_enabled=0
+	if exec 3>>"${rootmnt}/userdata/halium-posthandoff-kmsg.log"; then
+		userdata_log_enabled=1
+	else
+		tell_kmsg "WARNING: couldn't open post-handoff userdata log"
+	fi
+
+	if [ "$userdata_log_enabled" -eq 1 ] || [ "$metadata_log_enabled" -eq 1 ]; then
+		(
+			snapshot=0
+			while [ "$snapshot" -lt 36 ]; do
+				dmesg_output=$(dmesg | tail -n 500)
+				if [ "$userdata_log_enabled" -eq 1 ]; then
+					printf '\n===== post-handoff snapshot %s =====\n' "$snapshot" >&3
+					printf '%s\n' "$dmesg_output" >&3
+				fi
+				if [ "$metadata_log_enabled" -eq 1 ]; then
+					printf '\n===== post-handoff snapshot %s =====\n' "$snapshot" >&4
+					printf '%s\n' "$dmesg_output" >&4
+				fi
+				sync
+				sleep 5
+				snapshot=$((snapshot + 1))
+			done
+		) </dev/null >/dev/null 2>&1 &
+	fi
+fi

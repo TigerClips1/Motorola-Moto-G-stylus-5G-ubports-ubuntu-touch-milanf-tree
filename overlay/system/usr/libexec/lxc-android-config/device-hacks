@@ -1,0 +1,35 @@
+#!/bin/sh
+
+while [ "$(getprop init.svc.perf-hal-2-2)" != "running" ]; do
+    sleep 1
+done
+
+echo ON > /dev/wlan
+
+iw phy0 wowlan enable magic-packet disconnect
+
+# Mount filesystem to register interpreters against the native file format handler
+mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc
+systemctl restart systemd-binfmt.service
+
+# Stop an endless cycle of restarting and failing 'vendor.camera-provider-2-4',
+# as Waydroid connects to the one on the host-side binder interface
+if [ ! -f /var/lib/waydroid/overlay/vendor/etc/init/camera-provider-hack.rc ]; then
+    mkdir -p /var/lib/waydroid/overlay/vendor/etc/init
+    echo "on property:sys.boot_completed=1" > /var/lib/waydroid/overlay/vendor/etc/init/camera-provider-hack.rc
+    echo "  stop vendor.camera-provider-2-4" >> /var/lib/waydroid/overlay/vendor/etc/init/camera-provider-hack.rc
+fi
+
+# Set a wake lock while running Waydroid
+# Opportunistic autosuspend blocks Waydroid and waydroid-sensors
+# from processing events, leading to lockups and unrecoverable restarts
+echo -e '#!/bin/sh\necho waydroid > /sys/power/wake_lock' > /tmp/waydroid-start-hook
+echo -e '#!/bin/sh\necho waydroid > /sys/power/wake_unlock' > /tmp/waydroid-stop-hook
+chmod 755 /tmp/waydroid-start-hook
+chmod 755 /tmp/waydroid-stop-hook
+cat /usr/lib/waydroid/data/configs/config_base > /tmp/waydroid_config_base
+echo "lxc.hook.start-host = /tmp/waydroid-start-hook" >> /tmp/waydroid_config_base
+echo "lxc.hook.stop = /tmp/waydroid-stop-hook" >> /tmp/waydroid_config_base
+mount -o bind /tmp/waydroid_config_base /usr/lib/waydroid/data/configs/config_base
+
+exit 0

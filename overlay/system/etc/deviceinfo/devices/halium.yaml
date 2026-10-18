@@ -1,0 +1,27 @@
+Milanf:
+  Names:
+    - milanf
+    - XT2215
+    - moto g stylus 5G (2022)
+
+  PrettyName: moto g stylus 5G (2022)
+  DeviceType: phone
+  GridUnit: 24
+  SupportedOrientations:
+    - Portrait
+    - Landscape
+    - InvertedLandscape
+  MirAndroidPlatformServerBackpressure:
+    - false
+  MirAndroidPlatformServerPartialUpdates:
+    - true
+  MirAndroidPlatformServerEglSync:
+    - false
+  MirAndroidPlatformClientEglFlush:
+    - "!/usr/bin/unity8,!/usr/bin/lomiri,all"
+
+  DoubleTapToWake: "/sys/class/touchscreen/primary/gesture|1|0"
+  OfonoPlugin: binder
+  OfonoImplementsIms: true
+  FilesystemEncryption: true
+  RepowerdQtiPerfBooster: true
