@@ -10,7 +10,7 @@ deviceinfo_kernel_defconfig="vendor/holi-qgki_defconfig vendor/ext_config/lineag
 # LZ4 stream's end marker, so a multi-member LZ4 initramfs is only partially unpacked.
 deviceinfo_ramdisk_compression="gzip"
 deviceinfo_kernel_cmdline=""
-deviceinfo_kernel_vendor_cmdline="boot=halium androidboot.console=ttyMSM0 androidboot.hardware=qcom androidboot.memcg=1 androidboot.usbcontroller=4e00000.dwc3 cgroup.memory=nokmem,nosocket ip6table_raw.raw_before_defrag=1 iptable_raw.raw_before_defrag=1 loop.max_part=7 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x237 pcie_ports=compat service_locator.enable=1 swiotlb=0 androidboot.hab.product=milanf systempart=/dev/mapper/system"
+deviceinfo_kernel_vendor_cmdline="boot=halium androidboot.console=ttyMSM0 androidboot.hardware=qcom androidboot.memcg=1 androidboot.usbcontroller=4e00000.dwc3 cgroup.memory=nokmem,nosocket ip6table_raw.raw_before_defrag=1 iptable_raw.raw_before_defrag=1 loop.max_part=7 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x237 pcie_ports=compat service_locator.enable=1 swiotlb=0 androidboot.hab.product=milanf systempart=/dev/mapper/system apparmor=1 security=apparmor androidboot.selinux=permissive"
 deviceinfo_kernel_clang_compile="true"
 deviceinfo_kernel_llvm_compile="true"
 deviceinfo_halium_version="16"
