@@ -1,0 +1,15 @@
+diff --git a/system-image-from-ota.sh b/system-image-from-ota.sh
+index b43e991..f19ce2a 100755
+--- a/system-image-from-ota.sh
++++ b/system-image-from-ota.sh
+@@ -303,7 +303,9 @@ do
+             fi
+ 
+             # Move things to data
+-            cp partitions/* "$OUT" || true
++            if [ -d partitions ] && [ -n "$(ls -A partitions 2>/dev/null)" ]; then
++                cp partitions/* "$OUT"
++            fi
+             sudo rm -Rf partitions || true
+ 
+             # Remove tarball to free up space, since device tarballs

@@ -1,0 +1,7 @@
+# Halium does not use the Android A/B boot-control HAL (slot info comes from the
+# kernel cmdline). On milanf android.hardware.boot-service.qti aborts in
+# bootcontrol_init() because libfstab cannot find a default fstab, and init
+# restarts it endlessly (119 SIGABRTs + crash_dump64/tombstoned runs in the first
+# 3 minutes of boot). Keep it stopped.
+on early-init
+    stop vendor.boot-qti

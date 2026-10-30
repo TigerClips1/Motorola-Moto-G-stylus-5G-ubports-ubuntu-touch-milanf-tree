@@ -1,6 +1,10 @@
 #!/bin/sh
 
-while [ "$(getprop init.svc.perf-hal-2-2)" != "running" ]; do
+# Wait for the perf HAL, but never hang forever: if it does not come up the
+# remaining hacks (wlan power-on, binfmt, waydroid hooks) must still run.
+tries=0
+while [ "$(getprop init.svc.perf-hal-2-2)" != "running" ] && [ "$tries" -lt 90 ]; do
+    tries=$((tries + 1))
     sleep 1
 done
 

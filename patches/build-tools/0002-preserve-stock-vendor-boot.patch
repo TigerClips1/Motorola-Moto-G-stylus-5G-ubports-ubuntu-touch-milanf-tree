@@ -2,7 +2,7 @@ diff --git a/make-bootimage.sh b/make-bootimage.sh
 index b259b34..17efcec 100755
 --- a/make-bootimage.sh
 +++ b/make-bootimage.sh
-@@ -49,6 +49,19 @@ case "${deviceinfo_recovery_ramdisk_compression:=gzip}" in
+@@ -49,6 +49,32 @@ case "${deviceinfo_recovery_ramdisk_compression:=gzip}" in
          ;;
  esac
  
@@ -19,24 +19,23 @@ index b259b34..17efcec 100755
 +        ;;
 +esac
 +
++case "${deviceinfo_vendor_boot_base_ramdisk_compression:=$deviceinfo_vendor_boot_ramdisk_compression}" in
++    gzip)
++        BASE_VENDOR_DECOMPRESSION_CMD="gzip -dc"
++        ;;
++    lz4)
++        BASE_VENDOR_DECOMPRESSION_CMD="lz4 -d -c"
++        ;;
++    *)
++        echo "Unsupported deviceinfo_vendor_boot_base_ramdisk_compression value: '$deviceinfo_vendor_boot_base_ramdisk_compression'"
++        exit 1
++        ;;
++esac
++
  avb_add_hash_footer() {
      local bootimg="$1" bytes="$2" part rsa4096_key extra_args
      [ -z "$bytes" ] && return
-@@ -75,6 +88,13 @@ if [ -e "$RECOVERY_RAMDISK" ]; then
- 
-     fakeroot -- bash <<EOF
- gzip -dc "$RECOVERY_RAMDISK" | cpio -i
-+if [ "$deviceinfo_recovery_fakecache" = "false" ]; then
-+    if ! grep -q '^[[:space:]]*setprop ro\.ubuntu\.recovery\.fakecache true$' system/etc/init/hw/init.rc; then
-+        echo "Expected fake-cache property not found in system/etc/init/hw/init.rc" >&2
-+        exit 1
-+    fi
-+    sed -i 's/^\([[:space:]]*\)setprop ro\.ubuntu\.recovery\.fakecache true$/\1setprop ro.ubuntu.recovery.fakecache false/' system/etc/init/hw/init.rc
-+fi
- if [[ -n "$deviceinfo_unified_recovery_ui_density" && "$deviceinfo_unified_recovery_ui_density" != "mdpi" ]]; then
-     cp "$TMPDOWN/halium_bootable_recovery/res-$deviceinfo_unified_recovery_ui_density/images"/* "$TMPDOWN/ramdisk-recovery/res/images"
- fi
-@@ -151,6 +171,50 @@ if [ -d "$HERE/vendor-ramdisk-overlay" ]; then
+@@ -151,6 +171,47 @@ if [ -d "$HERE/vendor-ramdisk-overlay" ]; then
      VENDOR_RAMDISK="$TMPDOWN/ramdisk-vendor_boot.img"
      rm -rf "$TMPDOWN/vendor-ramdisk"
      mkdir -p "$TMPDOWN/vendor-ramdisk"
@@ -66,10 +65,7 @@ index b259b34..17efcec 100755
 +        fi
 +
 +        BASE_VENDOR_RAMDISK_CPIO="$BASE_VENDOR_BOOT_DIR/vendor_ramdisk.cpio"
-+        case "$deviceinfo_vendor_boot_ramdisk_compression" in
-+            gzip) gzip -dc "$BASE_VENDOR_RAMDISK" > "$BASE_VENDOR_RAMDISK_CPIO" ;;
-+            lz4) lz4 -d -c "$BASE_VENDOR_RAMDISK" > "$BASE_VENDOR_RAMDISK_CPIO" ;;
-+        esac
++        $BASE_VENDOR_DECOMPRESSION_CMD "$BASE_VENDOR_RAMDISK" > "$BASE_VENDOR_RAMDISK_CPIO"
 +
 +        cd "$TMPDOWN/vendor-ramdisk"
 +        cpio -idmu --no-absolute-filenames < "$BASE_VENDOR_RAMDISK_CPIO"
