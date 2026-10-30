@@ -2,15 +2,15 @@ deviceinfo_name="Motorola moto g stylus 5G (2022)"
 deviceinfo_manufacturer="Motorola"
 deviceinfo_codename="milanf"
 deviceinfo_arch="aarch64"
-deviceinfo_kernel_source="https://github.com/LineageOS/android_kernel_motorola_sm6375.git"
-deviceinfo_kernel_source_branch="lineage-23.2"
-deviceinfo_kernel_defconfig="vendor/holi-qgki_defconfig vendor/ext_config/lineage_moto-holi.config vendor/ext_config/moto-holi-milanf.config vendor/halium.config vendor/debugfs.config"
+deviceinfo_kernel_source="https://github.com/TigerClips1/motorola-g-stylus-5G-2022-ubports-ubuntu-touch-kernel"
+deviceinfo_kernel_source_branch="ubports"
+deviceinfo_kernel_defconfig="vendor/milanf_device.config vendor/debugfs.config vendor/halium.config"
 # Must stay gzip: the boot ramdisk is assembled by appending several compressed
 # members (base, overlay, recovery payload). The kernel's unlz4 stops at the first
 # LZ4 stream's end marker, so a multi-member LZ4 initramfs is only partially unpacked.
 deviceinfo_ramdisk_compression="gzip"
 deviceinfo_kernel_cmdline=""
-deviceinfo_kernel_vendor_cmdline="boot=halium androidboot.console=ttyMSM0 androidboot.hardware=qcom androidboot.memcg=1 androidboot.usbcontroller=4e00000.dwc3 cgroup.memory=nokmem,nosocket ip6table_raw.raw_before_defrag=1 iptable_raw.raw_before_defrag=1 loop.max_part=7 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x237 pcie_ports=compat service_locator.enable=1 swiotlb=0 androidboot.hab.product=milanf systempart=/dev/mapper/system apparmor=1 security=apparmor androidboot.selinux=permissive"
+deviceinfo_kernel_vendor_cmdline="boot=halium androidboot.console=ttyMSM0 androidboot.hardware=qcom androidboot.memcg=1 androidboot.usbcontroller=4e00000.dwc3 cgroup.memory=nokmem,nosocket ip6table_raw.raw_before_defrag=1 iptable_raw.raw_before_defrag=1 loop.max_part=7 lpm_levels.sleep_disabled=1 msm_rtb.filter=0x237 pcie_ports=compat service_locator.enable=1 swiotlb=0 androidboot.hab.product=milanf selinux=1 enforcing=0 lsm=selinux,apparmor,capability androidboot.selinux=permissive systempart=/dev/mapper/system"
 deviceinfo_kernel_clang_compile="true"
 deviceinfo_kernel_llvm_compile="true"
 deviceinfo_halium_version="16"
@@ -28,7 +28,7 @@ deviceinfo_bootimg_os_version="16.0.0"
 deviceinfo_bootimg_os_patch_level="2026-09"
 deviceinfo_bootimg_has_init_boot_partition="false"
 deviceinfo_bootimg_has_vendor_kernel_boot_partition="false"
-deviceinfo_dtb="vendor/qcom/blair-moto-milanf-base.dtb"
+# Reuse the DTB extracted from deviceinfo_vendor_boot_base_image.
 
 # Recovery runs from boot.img; this device has no separate recovery partition.
 deviceinfo_use_unified_recovery="true"
@@ -39,6 +39,10 @@ deviceinfo_recovery_fakecache="false"
 deviceinfo_bootimg_partition_size="100663296"
 deviceinfo_vendor_boot_partition_size="100663296"
 
+# Preserve the matching stock vendor ramdisk and DTB when generating vendor_boot.
+deviceinfo_vendor_boot_base_image="vendor/vendor_boot.img"
+# The base image is LZ4, but boot.img uses gzip; repack both ramdisks as gzip.
+deviceinfo_vendor_boot_base_ramdisk_compression="lz4"
 deviceinfo_vendor_boot_ramdisk_compression="gzip"
 
 # Leave room for dynamic-partition metadata and the existing vendor/product

@@ -1,0 +1,46 @@
+#!/bin/bash
+# Collects userspace diagnostics a few minutes after boot and stores them where
+# recovery can read them (the metadata partition) even if adb/MTP are broken.
+# Read-only data collection; changes nothing on the system.
+OUTDIRS=()
+[ -d /dev/.halium-metadata ] && { mkdir -p /dev/.halium-metadata/halium-diagnostics 2>/dev/null && OUTDIRS+=(/dev/.halium-metadata/halium-diagnostics); }
+[ -d /userdata ] && OUTDIRS+=(/userdata)
+
+run() { echo; echo "===== $* ====="; timeout 20 bash -c "$*" 2>&1; }
+
+collect() {
+    {
+        echo "diagnostics pass: $1   uptime: $(cut -d' ' -f1 /proc/uptime)s   date: $(date -u)"
+        run 'uname -a; cat /proc/cmdline'
+        run 'cat /sys/kernel/security/lsm; cat /sys/module/apparmor/parameters/enabled; getenforce'
+        run 'aa-status | head -20'
+        run 'systemd-analyze'
+        run 'systemd-analyze blame | head -40'
+        run 'systemd-analyze critical-chain | head -40'
+        run 'systemctl --failed --no-pager'
+        run 'systemctl list-jobs --no-pager | head -40'
+        run 'top -b -n1 | head -30'
+        run 'free -m; df -h / /userdata /android/vendor'
+        run 'lxc-ls -f'
+        run 'getprop | grep -E "sys.boot_completed|init.svc.(audioserver|vendor.audio|bluetooth|vendor.bluetooth|perf-hal|vendor.qti.vibrator|surfaceflinger|hwservicemanager|servicemanager|vndservicemanager)|ro.build.version.sdk"'
+        run 'rfkill list; hciconfig -a'
+        run 'systemctl status bluebinder --no-pager | head -25'
+        run 'journalctl -b -u bluebinder --no-pager | tail -40'
+        run 'cat /proc/asound/cards; ls /dev/snd'
+        run 'pactl list short cards; pactl list short sinks'
+        run 'lsmod | head -120'
+        run 'systemctl status usb-moded umtprd --no-pager | head -50'
+        run 'journalctl -b -u usb-moded -u umtprd --no-pager | tail -50'
+        run 'ls /sys/class/udc /dev/usb-ffs; cat /sys/kernel/config/usb_gadget/g1/UDC'
+        run 'journalctl -b -p warning --no-pager | tail -250'
+        run 'journalctl -b --no-pager | grep -iE "apparmor|denied|lomiri|click|app-launch|terminal" | tail -80'
+        run 'ps -eo pid,pcpu,etime,args --sort=-pcpu | head -25'
+    } > /tmp/halium-userspace-diag.txt 2>&1
+    for d in "${OUTDIRS[@]}"; do
+        cp /tmp/halium-userspace-diag.txt "$d/halium-userspace-diag-$1.txt" 2>/dev/null
+    done
+    sync
+}
+
+sleep 150;  collect 1
+sleep 270;  collect 2

@@ -1,0 +1,14 @@
+diff --git a/system-image-from-ota.sh b/system-image-from-ota.sh
+index b43e991..f4cdf48 100755
+--- a/system-image-from-ota.sh
++++ b/system-image-from-ota.sh
+@@ -325,7 +325,8 @@ do
+     progress $count
+ done < $COMMAND_FILE
+ 
+-if [ -e "$LOOPDEV" ]; then
++# LOOPDEV is only a candidate when "mount -o loop" was used, so detach it only if attached
++if [ -n "$LOOPDEV" ] && [ -e "$LOOPDEV" ] && sudo losetup "$LOOPDEV" >/dev/null 2>&1; then
+     sudo losetup -d "$LOOPDEV" || true
+ fi
+ 

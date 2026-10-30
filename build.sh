@@ -54,5 +54,7 @@ done
 
 install -D -m 0644 "$HERE/vendor/halium.config" \
     "$TMPDOWN/$KERNEL_DIR/arch/arm64/configs/vendor/halium.config"
+install -D -m 0644 "$HERE/vendor/milanf_device.config" \
+    "$TMPDOWN/$KERNEL_DIR/arch/arm64/configs/vendor/milanf_device.config"
 
 ./build/build.sh "${args[@]}" -b "$BUILD_DIR"

@@ -6,7 +6,15 @@ else
 	tell_kmsg "post-init-bottom run-init preflight rejected ${init}"
 fi
 
-if [ -d "${rootmnt}/userdata" ]; then
+# Boot diagnostics (dmesg snapshots every 5 s + sync, 180 s watchdog) cost I/O and
+# wakeups on every boot. They stay ON by default while porting; add
+# "halium.nodiag=1" to the kernel cmdline to skip them for timing/perf runs.
+HALIUM_NODIAG=0
+case " $(cat /proc/cmdline) " in
+*" halium.nodiag=1 "*) HALIUM_NODIAG=1 ;;
+esac
+
+if [ "$HALIUM_NODIAG" = "0" ] && [ -d "${rootmnt}/userdata" ]; then
 	DIAGNOSTIC_DIR=""
 	metadata_partition=""
 	for candidate in \

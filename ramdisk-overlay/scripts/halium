@@ -1,6 +1,7 @@
 # Local filesystem mounting			-*- shell-script -*-
 
 HALIUM_LOG_FILE=""
+HALIUM_EARLY_LOG_FILE=""
 
 _log_msg() {
 	if [ "$quiet" = "y" ]; then return; fi
@@ -17,6 +18,53 @@ tell_kmsg() {
 	# Echos a string into /dev/kmsg, ignoring errors.
 	echo "initrd: $1" >/dev/kmsg || true
 	[ -n "$HALIUM_LOG_FILE" ] && echo "initrd: $1" >> "$HALIUM_LOG_FILE"
+	[ -n "$HALIUM_EARLY_LOG_FILE" ] && echo "initrd: $1" >> "$HALIUM_EARLY_LOG_FILE"
+}
+
+start_early_metadata_log() {
+	[ -n "$HALIUM_EARLY_LOG_FILE" ] && return 0
+
+	metadata_partition=""
+	for candidate in \
+		/dev/disk/by-partlabel/metadata \
+		/dev/block/by-name/metadata \
+		/dev/block/bootdevice/by-name/metadata
+	do
+		if [ -b "$candidate" ]; then
+			metadata_partition=$(readlink -f "$candidate")
+			break
+		fi
+	done
+
+	if [ -z "$metadata_partition" ]; then
+		tell_kmsg "WARNING: metadata partition not found for early initrd logging"
+		return 0
+	fi
+
+	metadata_mount=/metadata
+	mkdir -p "$metadata_mount"
+	if ! grep -Fq " ${metadata_mount} " /proc/mounts; then
+		if ! mount -t ext4 -o noatime,nosuid,nodev "$metadata_partition" "$metadata_mount"; then
+			tell_kmsg "WARNING: couldn't mount metadata for early initrd logging"
+			return 0
+		fi
+	fi
+
+	if ! mkdir -p "${metadata_mount}/halium-diagnostics"; then
+		tell_kmsg "WARNING: couldn't create early initrd diagnostics directory"
+		return 0
+	fi
+
+	HALIUM_EARLY_LOG_FILE="${metadata_mount}/halium-diagnostics/halium-early-initrd.log"
+	{
+		echo "===== milanf initrd diagnostic candidate-v5 ====="
+		echo "boot mode: $(cat /proc/cmdline | sed -n 's/.*androidboot.mode=\([^ ]*\).*/\1/p')"
+		echo "slot: $(grep -o 'androidboot\.slot_suffix=..' /proc/cmdline | tail -1 | cut -d = -f2)"
+		echo "Reached early metadata logger before userdata lookup"
+		dmesg | tail -n 300
+	} > "$HALIUM_EARLY_LOG_FILE"
+	sync
+	tell_kmsg "Early initrd metadata log active"
 }
 
 start_initrd_log_capture() {
@@ -26,10 +74,15 @@ start_initrd_log_capture() {
 		echo "===== Halium initrd boot $(date -u 2>/dev/null || date) ====="
 	} >> "$HALIUM_LOG_FILE"
 	dmesg > /tmpmnt/halium-kmsg.log
+	start_early_metadata_log
 
 	mkdir -p /run
 	mkfifo /run/halium-log.fifo
-	tee -a "$HALIUM_LOG_FILE" /dev/kmsg < /run/halium-log.fifo &
+	if [ -n "$HALIUM_EARLY_LOG_FILE" ]; then
+		tee -a "$HALIUM_LOG_FILE" "$HALIUM_EARLY_LOG_FILE" /dev/kmsg < /run/halium-log.fifo &
+	else
+		tee -a "$HALIUM_LOG_FILE" /dev/kmsg < /run/halium-log.fifo &
+	fi
 	exec > /run/halium-log.fifo 2>&1
 
 	(
@@ -97,6 +150,7 @@ halium_panic() {
 	# Puts panic reason into kmsg and then starts the panic handlers
 	REASON="$1"
 	tell_kmsg "PANIC for reason: $REASON"
+	sync
 	panic $REASON
 }
 
@@ -357,6 +411,10 @@ resize_userdata_if_needed() {
 		tell_kmsg "skipping ext4-only userdata resize for $filesystem_type"
 		return
 	fi
+	if [ "$userdata_skip_resize" = "true" ]; then
+		tell_kmsg "skipping userdata resize because bundled e2fsprogs does not support FEATURE_C12"
+		return
+	fi
 
 	# See if the filesystem on the userdata partition needs resizing (usually on first boot).
 	# If the difference between the partition size and the filesystem size is above a small
@@ -581,6 +639,7 @@ mountroot() {
 
 	# Make sure the device has been created by udev before we try to mount
 	udevadm settle
+	start_early_metadata_log
 
 	# find the right partition
 	for partname in $partlist; do
@@ -619,19 +678,51 @@ mountroot() {
 	fi
 
 	userdata_fs_type=$(blkid "$path" -o value -s TYPE 2>/dev/null)
+	userdata_skip_resize=false
 	case "$userdata_fs_type" in
 	ext4)
 		tell_kmsg "checking ext4 filesystem integrity for the userdata partition"
 		# Let the kernel replay the journal before running e2fsck.
 		fsck_start=$(date +%s)
 		mount -t ext4 -o errors=remount-ro "$path" /tmpmnt || halium_panic "Couldn't mount ext4 userdata at $path."
+		if ! awk '$2 == "/tmpmnt" && $4 ~ /(^|,)rw(,|$)/ { found=1 } END { exit !found }' /proc/mounts; then
+			umount /tmpmnt || halium_panic "Couldn't unmount read-only ext4 userdata at $path."
+			halium_panic "Kernel mounted userdata read-only; refusing the FEATURE_C12 fsck bypass."
+		fi
 		umount /tmpmnt || halium_panic "Couldn't unmount ext4 userdata at $path."
 		if e2fsck -y "$path" >/run/e2fsck.out 2>&1; then
 			fsck_status=0
 		else
 			fsck_status=$?
 		fi
-		[ "$fsck_status" -le 3 ] || halium_panic "e2fsck failed for userdata at $path with status $fsck_status."
+		if [ "$fsck_status" -gt 3 ]; then
+			# The initrd's e2fsprogs 1.46.x does not know ext4's orphan_file
+			# feature (FEATURE_C12), which is compatible with older kernels when
+			# no orphan recovery is pending. The kernel mount/unmount above has
+			# already replayed the journal successfully. Permit this exact
+			# unsupported-feature-only case so boot can continue; keep all other
+			# e2fsck failures fatal, and persist the checker output for diagnosis.
+			if grep -Eq "^${path} has unsupported feature\\(s\\): FEATURE_C12[[:space:]]*$" /run/e2fsck.out; then
+				userdata_skip_resize=true
+				tell_kmsg "WARNING: old e2fsck cannot check userdata orphan_file (FEATURE_C12); continuing after successful kernel journal replay"
+				if [ -n "$HALIUM_EARLY_LOG_FILE" ]; then
+					{
+						echo "=== e2fsck output (FEATURE_C12 compatibility bypass) ==="
+						cat /run/e2fsck.out
+					} >> "$HALIUM_EARLY_LOG_FILE"
+					sync
+				fi
+			else
+				if [ -n "$HALIUM_EARLY_LOG_FILE" ]; then
+					{
+						echo "=== e2fsck output (fatal status $fsck_status) ==="
+						cat /run/e2fsck.out
+					} >> "$HALIUM_EARLY_LOG_FILE"
+					sync
+				fi
+				halium_panic "e2fsck failed for userdata at $path with status $fsck_status."
+			fi
+		fi
 		fsck_end=$(date +%s)
 		tell_kmsg "checking ext4 userdata took (including e2fsck) $((fsck_end - fsck_start)) seconds"
 		;;
@@ -671,8 +762,64 @@ mountroot() {
 	if [ -n "$super_partition" ]; then
 		tell_kmsg "parsing dynamic partitions from $super_partition"
 		mkdir -p /run
-		if ! /sbin/parse-android-dynparts "$super_partition" > /run/parse-android-dynparts.sh; then
-			halium_panic "Failed to parse dynamic partitions from $super_partition."
+		# Resolve the slot again here instead of relying on the value set while
+		# locating userdata. This is the decision that selects the matching
+		# dynamic-partition metadata on milanf.
+		dynamic_slot_suffix=$(grep -o 'androidboot\.slot_suffix=..' /proc/cmdline | tail -1 | cut -d "=" -f2)
+		tell_kmsg "dynamic partition slot suffix is ${dynamic_slot_suffix:-unset}"
+		if [ "$dynamic_slot_suffix" = "_b" ]; then
+			# The bundled UBports parser reads metadata slot 0 unconditionally.
+			# This device's metadata slot 0 holds the 3456 MiB Ubuntu system_b,
+			# while slot 1 holds the stock B-side product/vendor partitions.
+			# Keep system_b from slot 0 and take the remaining B mappings from
+			# slot 1 so Android services get vendor_b/product_b as well.
+			parser=/sbin/parse-android-dynparts
+			parser_hash=$(sha256sum "$parser" | awk '{print $1}')
+			if [ "$parser_hash" != "d265163efb2a2edbc41d809708253e640b9f7c575c3fe8dfd40bb5908a48a86f" ]; then
+				halium_panic "Unexpected parse-android-dynparts binary hash $parser_hash; refusing unsafe slot selection."
+			fi
+			if ! "$parser" "$super_partition" > /run/parse-android-dynparts-slot0.sh 2>/run/parse-android-dynparts-slot0.err; then
+				cat /run/parse-android-dynparts-slot0.err
+				halium_panic "Failed to parse metadata slot 0 from $super_partition."
+			fi
+			if ! grep -q '^dmsetup create system_b <<EOF$' /run/parse-android-dynparts-slot0.sh; then
+				halium_panic "Metadata slot 0 did not provide the custom system_b mapping."
+			fi
+			# ReadMetadata()'s second argument is hard-coded to zero at this
+			# instruction in the pinned parser binary. Change it to slot 1 only
+			# after checking the exact upstream binary hash above.
+			if ! printf '\041\000\200\122' | dd of="$parser" bs=1 seek=1752 count=4 conv=notrunc 2>/dev/null; then
+				halium_panic "Could not select metadata slot 1 in parse-android-dynparts."
+			fi
+			if [ "$(sha256sum "$parser" | awk '{print $1}')" != "f0c74bf9002635d3640e52d167c27f5efc0c043fe3fdbad2a05e9b1a86382942" ]; then
+				halium_panic "Patched parse-android-dynparts binary did not match the expected slot-1 build."
+			fi
+			if ! "$parser" "$super_partition" > /run/parse-android-dynparts-slot1.sh 2>/run/parse-android-dynparts-slot1.err; then
+				cat /run/parse-android-dynparts-slot1.err
+				halium_panic "Failed to parse metadata slot 1 from $super_partition."
+			fi
+			if ! grep -q '^dmsetup create vendor_b <<EOF$' /run/parse-android-dynparts-slot1.sh; then
+				halium_panic "Metadata slot 1 did not provide the active vendor_b mapping."
+			fi
+			if ! awk '
+				/^dmsetup create system_b <<EOF$/ { skip=1; next }
+				skip && /^EOF$/ { skip=0; next }
+				!skip { print }
+			' /run/parse-android-dynparts-slot1.sh > /run/parse-android-dynparts.sh; then
+				halium_panic "Could not filter the stock system_b mapping from metadata slot 1."
+			fi
+			if ! awk '
+				/^dmsetup create system_b <<EOF$/ { keep=1 }
+				keep { print; if ($0 == "EOF") keep=0 }
+			' /run/parse-android-dynparts-slot0.sh >> /run/parse-android-dynparts.sh; then
+				halium_panic "Could not retain the custom system_b mapping from metadata slot 0."
+			fi
+			tell_kmsg "using custom system_b from metadata slot 0 and B-side vendor/product mappings from metadata slot 1"
+		else
+			if ! /sbin/parse-android-dynparts "$super_partition" > /run/parse-android-dynparts.sh 2>/run/parse-android-dynparts.err; then
+				cat /run/parse-android-dynparts.err
+				halium_panic "Failed to parse dynamic partitions from $super_partition."
+			fi
 		fi
 		if ! sh /run/parse-android-dynparts.sh; then
 			halium_panic "Failed to create dynamic partition mappings."
@@ -680,6 +827,13 @@ mountroot() {
 		if ! dmsetup mknodes; then
 			halium_panic "Failed to create device-mapper nodes."
 		fi
+		{
+			echo "Dynamic partition tables executed:"
+			cat /run/parse-android-dynparts.sh
+			echo "Device-mapper nodes:"
+			dmsetup ls --tree 2>&1
+			ls -l /dev/mapper 2>&1
+		} >> "$HALIUM_LOG_FILE"
 	elif grep -q 'systempart=/dev/mapper/' /proc/cmdline; then
 		halium_panic "Dynamic system partition requested, but no super partition was found."
 	fi

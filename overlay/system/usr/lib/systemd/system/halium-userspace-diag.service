@@ -1,0 +1,14 @@
+[Unit]
+Description=Collect userspace boot diagnostics for the milanf port
+After=basic.target
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/halium-userspace-diag
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=infinity
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target
